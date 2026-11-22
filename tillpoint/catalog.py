@@ -1,3 +1,4 @@
+
 """Product catalog with a per-process read cache."""
 from dataclasses import dataclass
 
@@ -34,31 +35,70 @@ class Catalog:
 
     def get_product(self, sku):
         product = self._cache.get(sku)
+
         if product is None:
-            row = self.conn.execute("SELECT * FROM products WHERE sku = ?", (sku,)).fetchone()
+            row = self.conn.execute(
+                "SELECT * FROM products WHERE sku = ?", (sku,)
+            ).fetchone()
+
             if row is None:
                 raise UnknownProduct(sku)
-            product = Product(row["sku"], row["name"], row["price_cents"], row["stock"])
+
+            product = Product(
+                row["sku"],
+                row["name"],
+                row["price_cents"],
+                row["stock"]
+            )
             self._cache[sku] = product
+
         return product
 
     def update_price(self, sku, price_cents):
         if price_cents < 0:
             raise ValueError("price must not be negative")
-        cur = self.conn.execute("UPDATE products SET price_cents = ? WHERE sku = ?", (price_cents, sku))
+
+        cur = self.conn.execute(
+            "UPDATE products SET price_cents = ? WHERE sku = ?",
+            (price_cents, sku)
+        )
+
         if cur.rowcount == 0:
             raise UnknownProduct(sku)
+
         self._cache.pop(sku, None)
 
     def reserve(self, sku, qty):
-        """Take qty units out of stock, or raise OutOfStock."""
-        product = self.get_product(sku)
-        if product.stock < qty:
-            raise OutOfStock(sku, qty, product.stock)
-        self.conn.execute("UPDATE products SET stock = stock - ? WHERE sku = ?", (qty, sku))
+        """Atomically reserve stock or raise OutOfStock."""
+
+        # The database checks current stock and deducts it in one operation.
+        cur = self.conn.execute(
+            """
+            UPDATE products
+            SET stock = stock - ?
+            WHERE sku = ? AND stock >= ?
+            """,
+            (qty, sku, qty)
+        )
+
+        if cur.rowcount == 0:
+            row = self.conn.execute(
+                "SELECT stock FROM products WHERE sku = ?",
+                (sku,)
+            ).fetchone()
+
+            if row is None:
+                raise UnknownProduct(sku)
+
+            raise OutOfStock(sku, qty, row["stock"])
+
+        # Remove this process's potentially stale cached product.
         self._cache.pop(sku, None)
 
     def release(self, sku, qty):
         """Put qty units back into stock."""
-        self.conn.execute("UPDATE products SET stock = stock + ? WHERE sku = ?", (qty, sku))
+        self.conn.execute(
+            "UPDATE products SET stock = stock + ? WHERE sku = ?",
+            (qty, sku)
+        )
         self._cache.pop(sku, None)
