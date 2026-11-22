@@ -1,6 +1,9 @@
+
 """SQLite storage. All money is integer cents; all timestamps are UTC ISO-8601 strings."""
+
 import sqlite3
 from datetime import datetime, timezone
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
@@ -9,6 +12,7 @@ CREATE TABLE IF NOT EXISTS products (
     price_cents INTEGER NOT NULL,
     stock INTEGER NOT NULL DEFAULT 0
 );
+
 CREATE TABLE IF NOT EXISTS coupons (
     code TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('percent', 'fixed')),
@@ -17,6 +21,7 @@ CREATE TABLE IF NOT EXISTS coupons (
     max_uses INTEGER,
     uses INTEGER NOT NULL DEFAULT 0
 );
+
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     customer TEXT NOT NULL,
@@ -29,12 +34,14 @@ CREATE TABLE IF NOT EXISTS orders (
     total_cents INTEGER NOT NULL,
     created_at TEXT NOT NULL
 );
+
 CREATE TABLE IF NOT EXISTS order_items (
     order_id INTEGER NOT NULL REFERENCES orders(id),
     sku TEXT NOT NULL REFERENCES products(sku),
     qty INTEGER NOT NULL,
     unit_price_cents INTEGER NOT NULL
 );
+
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER NOT NULL REFERENCES orders(id),
@@ -42,8 +49,15 @@ CREATE TABLE IF NOT EXISTS payments (
     amount_cents INTEGER NOT NULL,
     received_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
-CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_payments_order
+ON payments(order_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_event_id
+ON payments(event_id);
+
+CREATE INDEX IF NOT EXISTS idx_orders_customer
+ON orders(customer, created_at);
 """
 
 
@@ -64,4 +78,6 @@ def to_iso(dt):
 
 
 def from_iso(text):
-    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(
+        text, "%Y-%m-%dT%H:%M:%SZ"
+    ).replace(tzinfo=timezone.utc)
