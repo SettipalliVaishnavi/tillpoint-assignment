@@ -1,6 +1,6 @@
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from tillpoint import db, reports
 from tillpoint.api import App
@@ -63,6 +63,41 @@ class OrderDeskTest(unittest.TestCase):
         })
         self.app.orders.cancel(order["id"])
         self.assertEqual(self.app.catalog.get_product("TEE").stock, 3)
+
+    def test_cancel_pending_order_restocks(self):
+        order = self.app.orders.create("ana", [("TEE", 2)])
+
+        self.app.orders.cancel(order["id"])
+
+        self.assertEqual(self.app.catalog.get_product("TEE").stock, 3)
+
+    def test_pending_order_expires_after_30_minutes(self):
+        created = datetime(2025, 3, 10, 12, 0, tzinfo=timezone.utc)
+        order = self.app.orders.create(
+            "ana", [("MUG", 2)], now=created
+        )
+
+        expiry_check = created + timedelta(minutes=31)
+        self.app.orders.expire_pending_orders(now=expiry_check)
+
+        updated_order = self.app.orders.get(order["id"])
+
+        self.assertEqual(updated_order["status"], "cancelled")
+        self.assertEqual(self.app.catalog.get_product("MUG").stock, 10)
+
+    def test_pending_order_does_not_expire_before_30_minutes(self):
+        created = datetime(2025, 3, 10, 12, 0, tzinfo=timezone.utc)
+        order = self.app.orders.create(
+            "ana", [("MUG", 2)], now=created
+        )
+
+        expiry_check = created + timedelta(minutes=29)
+        self.app.orders.expire_pending_orders(now=expiry_check)
+
+        updated_order = self.app.orders.get(order["id"])
+
+        self.assertEqual(updated_order["status"], "pending")
+        self.assertEqual(self.app.catalog.get_product("MUG").stock, 8)
 
     def test_daily_sales(self):
         order = self.app.orders.create("ana", [("MUG", 1)])
