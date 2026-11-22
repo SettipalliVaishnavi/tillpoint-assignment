@@ -132,6 +132,30 @@ class OrderDeskTest(unittest.TestCase):
             }
         )
 
+    def test_daily_sales_uses_india_timezone(self):
+        order = self.app.orders.create("ana", [("MUG", 1)])
+
+        # 8:00 PM UTC on March 10 = 1:30 AM IST on March 11.
+        payment_time = datetime(
+            2025, 3, 10, 20, 0, tzinfo=timezone.utc
+        )
+
+        self.app.payments.handle_event({
+            "id": "evt_india",
+            "type": "payment.succeeded",
+            "order_id": order["id"],
+            "amount_cents": 1200
+        }, now=payment_time)
+
+        result = reports.daily_sales(
+            self.conn,
+            "2025-03-11",
+            utc_offset_minutes=330
+        )
+
+        self.assertEqual(result["revenue_cents"], 1200)
+        self.assertEqual(result["orders"], 1)
+
     def test_price_change(self):
         self.app.handle("PUT", "/products/MUG", {"price_cents": 1500})
         self.assertEqual(
