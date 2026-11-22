@@ -58,6 +58,19 @@ ON payments(event_id);
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer
 ON orders(customer, created_at);
+
+CREATE TABLE IF NOT EXISTS payment_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL REFERENCES orders(id),
+    event_id TEXT NOT NULL UNIQUE,
+    amount_cents INTEGER NOT NULL,
+    received_at TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'needs_review'
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_reviews_order
+ON payment_reviews(order_id);
 """
 
 

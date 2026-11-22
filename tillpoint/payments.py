@@ -1,5 +1,5 @@
 
-"""Payment provider webhooks. The provider retries a delivery until it gets a 2xx, so events can repeat."""
+"""Payment provider webhooks. The provider may retry webhook deliveries."""
 
 from . import db
 
@@ -13,7 +13,7 @@ class Payments:
         self.conn = conn
 
     def handle_event(self, event, now=None):
-        """Process each successful payment event only once."""
+        """Process successful payments once and flag extra captures for review."""
 
         if event.get("type") != "payment.succeeded":
             return None
@@ -31,7 +31,41 @@ class Payments:
         if order["status"] == "cancelled":
             raise PaymentError(f"order {order['id']} is cancelled")
 
-        cur = self.conn.execute(
+        received_at = db.to_iso(now or db.utcnow())
+
+        # Ignore a retry of an event already accepted or flagged for review.
+        existing = self.conn.execute(
+            """
+            SELECT event_id FROM payments WHERE event_id = ?
+            UNION ALL
+            SELECT event_id FROM payment_reviews WHERE event_id = ?
+            """,
+            (event["id"], event["id"])
+        ).fetchone()
+
+        if existing is not None:
+            return order["status"]
+
+        # A second distinct successful payment must not increase order revenue.
+        if order["status"] == "paid" or order["status"] == "shipped":
+            self.conn.execute(
+                """
+                INSERT INTO payment_reviews
+                (order_id, event_id, amount_cents, received_at, reason)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    order["id"],
+                    event["id"],
+                    event["amount_cents"],
+                    received_at,
+                    "Additional successful payment for an already-paid order"
+                )
+            )
+            return order["status"]
+
+        # Accept the first successful payment.
+        self.conn.execute(
             """
             INSERT INTO payments
             (order_id, event_id, amount_cents, received_at)
@@ -42,18 +76,11 @@ class Payments:
                 order["id"],
                 event["id"],
                 event["amount_cents"],
-                db.to_iso(now or db.utcnow())
+                received_at
             )
         )
 
-        # The same event was already processed.
-        if cur.rowcount == 0:
-            return order["status"]
-
-        if (
-            order["status"] == "pending"
-            and self.paid_cents(order["id"]) >= order["total_cents"]
-        ):
+        if self.paid_cents(order["id"]) >= order["total_cents"]:
             self.conn.execute(
                 "UPDATE orders SET status = 'paid' WHERE id = ?",
                 (order["id"],)
